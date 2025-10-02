@@ -1,8 +1,10 @@
 .otd-handle{position:absolute;top:0;right:-3px;width:6px;height:100%;cursor:col-resize;background:transparent;z-index:50;}
 /* New column handle appended to table (full height) */
 .otd-chandle{position:absolute;top:0;width:6px;height:100%;cursor:col-resize;background:transparent;z-index:60;}
-.otd-handle:hover,.otd-chandle:hover{background:var(--background-modifier-hover);} 
-.otd-handle:focus,.otd-chandle:focus{outline:1px solid var(--interactive-accent);background:var(--background-modifier-hover);}
+/* Outer width handle (outside the right edge) */
+.otd-ohandle{position:absolute;top:0;right:-2px;width:10px;height:100%;cursor:col-resize;background:transparent;z-index:65;}
+.otd-handle:hover,.otd-chandle:hover,.otd-ohandle:hover{background:var(--background-modifier-hover);} 
+.otd-handle:focus,.otd-chandle:focus,.otd-ohandle:focus{outline:1px solid var(--interactive-accent);background:var(--background-modifier-hover);}
 .otd-handle:active{background:var(--interactive-accent);opacity:0.5;}
 /* Make cells positioning context only when needed; we now stretch handles to table height via JS */
 .otd-th{position:relative;}
@@ -29,7 +31,7 @@ table.otd-managed td, table.otd-managed th{ overflow: visible; }
 /* Stabilize layout during LP mutations */
 table.otd-managed{ table-layout: fixed; width: 100%; position: relative; }
 /* Parked (offscreen) tables disable handle hit-testing */
-table.otd-inactive .otd-chandle, table.otd-inactive .otd-rhandle{ pointer-events: none; }
+table.otd-inactive .otd-chandle, table.otd-inactive .otd-rhandle, table.otd-inactive .otd-ohandle{ pointer-events: none; }
 
 /* Row resize handle */
 .otd-rhandle{position:absolute;left:0;width:100%;height:6px;cursor:row-resize;background:transparent;z-index:60;}

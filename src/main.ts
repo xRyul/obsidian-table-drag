@@ -2,7 +2,7 @@ import { App, MarkdownPostProcessorContext, Plugin, PluginSettingTab, Setting, T
 import { tableResizeExtension } from './cm6/tableResizeExtension';
 
 export interface TableKey { path: string; lineStart: number; lineEnd: number; fingerprint: string }
-interface TableSizes { ratios: number[]; lastPxWidth?: number; rowHeights?: Record<number, number>; updatedAt: number }
+interface TableSizes { ratios: number[]; lastPxWidth?: number; rowHeights?: Record<number, number>; tablePxWidth?: number; updatedAt: number }
 interface PluginData { tables: Record<string, TableSizes>; version: number }
 
 function normalizeFingerprint(fp: string): string {
@@ -29,6 +29,10 @@ interface TableDragSettings {
   enableRowResize: boolean; // show row handles
   rowMinHeightPx: number;
   rowKeyboardStepPx: number;
+  // Outer width handle
+  showOuterWidthHandle: boolean;
+  outerHandleMode: 'edge' | 'scale';
+  outerMaxWidthPx: number; // 0 = unlimited
   // Diagnostics
   enableDebugLogs: boolean;
   debugVerbose: boolean;
@@ -45,6 +49,9 @@ const DEFAULT_SETTINGS: TableDragSettings = {
   enableRowResize: true,
   rowMinHeightPx: 24,
   rowKeyboardStepPx: 4,
+  showOuterWidthHandle: true,
+  outerHandleMode: 'edge',
+  outerMaxWidthPx: 0,
   enableDebugLogs: false,
   debugVerbose: false,
   debugBufferSize: 500,
@@ -189,6 +196,9 @@ export default class TableDragPlugin extends Plugin {
 
     // If we have stored ratios, apply robustly (px if container > 0; else % and reapply on resize)
     if (stored && stored.ratios.length === colCount) {
+      if (stored.tablePxWidth && stored.tablePxWidth > 0) {
+        (table.style as any).width = `${Math.floor(stored.tablePxWidth)}px`;
+      }
       if (containerWidth > 0) {
         const px = stored.ratios.map((r) => Math.max(this.settings.minColumnWidthPx, Math.round(r * containerWidth)));
         this.applyColWidths(cols, px);
@@ -378,6 +388,121 @@ export default class TableDragPlugin extends Plugin {
 
     // Position column handles initially
     positionColumnHandles();
+
+    // Outer width handle (grow beyond readable line length)
+    if (this.settings.showOuterWidthHandle) {
+      let ohandle = table.querySelector('.otd-ohandle') as HTMLDivElement | null;
+      if (!ohandle) {
+        ohandle = document.createElement('div');
+        ohandle.className = 'otd-ohandle';
+        ohandle.setAttribute('role', 'separator');
+        ohandle.setAttribute('aria-label', 'Resize table width');
+        ohandle.tabIndex = 0;
+        table.appendChild(ohandle);
+        this.log('outer-mounted', { key: resolvedKeyStr });
+      }
+      const positionOuter = () => {
+        const tRect = table.getBoundingClientRect();
+        ohandle!.style.top = '0px';
+        ohandle!.style.height = `${Math.max(0, tRect.height)}px`;
+        ohandle!.style.right = '-8px';
+      };
+      positionOuter();
+
+      let startX = 0;
+      let startPx: number[] = [];
+      let active = false;
+      const onOMove = (ev: PointerEvent) => {
+        if (!active) return;
+        const dx = ev.clientX - startX;
+        const cur = [...startPx];
+        const totalStart = startPx.reduce((a,b)=>a+b,0);
+        let targetTotal = totalStart + dx;
+        const minTotal = colCount * this.settings.minColumnWidthPx;
+        if (targetTotal < minTotal) targetTotal = minTotal;
+        if (this.settings.outerMaxWidthPx > 0) targetTotal = Math.min(targetTotal, this.settings.outerMaxWidthPx);
+        const delta = targetTotal - totalStart;
+        let next: number[];
+        if (this.settings.outerHandleMode === 'scale') {
+          const factor = targetTotal / totalStart;
+          next = cur.map(w => Math.max(this.settings.minColumnWidthPx, Math.floor(w * factor)));
+          // adjust rounding to match target
+          const diff = targetTotal - next.reduce((a,b)=>a+b,0);
+          if (Math.abs(diff) >= 1) next[next.length-1] = Math.max(this.settings.minColumnWidthPx, next[next.length-1] + Math.round(diff));
+        } else {
+          // edge mode: split delta across first and last columns
+          next = [...cur];
+          const half = Math.round(delta/2);
+          next[0] = Math.max(this.settings.minColumnWidthPx, next[0] + half);
+          next[next.length-1] = Math.max(this.settings.minColumnWidthPx, next[next.length-1] + (delta - half));
+          // ensure total matches target by adjusting last col
+          const sum = next.reduce((a,b)=>a+b,0);
+          if (sum !== targetTotal) next[next.length-1] = Math.max(this.settings.minColumnWidthPx, next[next.length-1] + (targetTotal - sum));
+        }
+        this.applyColWidths(cols, next);
+        (table.style as any).width = `${Math.floor(targetTotal)}px`;
+        positionColumnHandles();
+        positionOuter();
+      };
+      const onOUp = (_ev: PointerEvent) => {
+        if (!active) return;
+        active = false;
+        ohandle!.releasePointerCapture((_ev as any).pointerId);
+        window.removeEventListener('pointermove', onOMove);
+        window.removeEventListener('pointerup', onOUp);
+        const finalPx = getColWidths(cols);
+        const total = finalPx.reduce((a,b)=>a+b,0);
+        const ratios = normalizeRatios(finalPx);
+        this.dataStore.tables[resolvedKeyStr] = { ratios, lastPxWidth: total, tablePxWidth: total, updatedAt: Date.now() };
+        this.log('outer-drag', { key: resolvedKeyStr, mode: this.settings.outerHandleMode, total });
+        void this.saveDataStore();
+      };
+      ohandle.addEventListener('pointerdown', (ev: PointerEvent) => {
+        ev.preventDefault(); ev.stopPropagation();
+        active = true;
+        startX = ev.clientX;
+        startPx = getColWidths(cols);
+        ohandle!.setPointerCapture((ev as any).pointerId);
+        this.log('outer-ptrdown', { key: resolvedKeyStr, startPx, startX });
+        window.addEventListener('pointermove', onOMove, { passive: true });
+        window.addEventListener('pointerup', onOUp, { passive: true });
+      });
+      const onKey = (ev: KeyboardEvent) => {
+        const cur = getColWidths(cols);
+        const totalStart = cur.reduce((a,b)=>a+b,0);
+        const step = (ev.ctrlKey || (ev as any).metaKey) ? 1 : this.settings.keyboardStepPx;
+        let used = false; let targetTotal = totalStart;
+        if (ev.key === 'ArrowLeft') { targetTotal = totalStart - step; used = true; }
+        if (ev.key === 'ArrowRight') { targetTotal = totalStart + step; used = true; }
+        if (!used) return;
+        ev.preventDefault();
+        const minTotal = colCount * this.settings.minColumnWidthPx;
+        if (targetTotal < minTotal) targetTotal = minTotal;
+        if (this.settings.outerMaxWidthPx > 0) targetTotal = Math.min(targetTotal, this.settings.outerMaxWidthPx);
+        let next: number[];
+        if (this.settings.outerHandleMode === 'scale') {
+          const factor = targetTotal / totalStart;
+          next = cur.map(w => Math.max(this.settings.minColumnWidthPx, Math.floor(w * factor)));
+          const diff = targetTotal - next.reduce((a,b)=>a+b,0);
+          if (Math.abs(diff) >= 1) next[next.length-1] = Math.max(this.settings.minColumnWidthPx, next[next.length-1] + Math.round(diff));
+        } else {
+          const delta = targetTotal - totalStart;
+          next = [...cur];
+          const half = Math.round(delta/2);
+          next[0] = Math.max(this.settings.minColumnWidthPx, next[0] + half);
+          next[next.length-1] = Math.max(this.settings.minColumnWidthPx, next[next.length-1] + (delta - half));
+          const sum = next.reduce((a,b)=>a+b,0);
+          if (sum !== targetTotal) next[next.length-1] = Math.max(this.settings.minColumnWidthPx, next[next.length-1] + (targetTotal - sum));
+        }
+        this.applyColWidths(cols, next);
+        (table.style as any).width = `${Math.floor(targetTotal)}px`;
+        const ratios = normalizeRatios(next);
+        this.dataStore.tables[resolvedKeyStr] = { ratios, lastPxWidth: targetTotal, tablePxWidth: targetTotal, updatedAt: Date.now() };
+        void this.saveDataStore();
+        positionColumnHandles(); positionOuter();
+      };
+      ohandle.addEventListener('keydown', onKey);
+    }
     // Row resize handles
     if (this.settings.enableRowResize) {
       const rows = Array.from(table.rows) as HTMLTableRowElement[];
@@ -553,8 +678,11 @@ export default class TableDragPlugin extends Plugin {
     const kstr = this.findOrMigrateToCanonicalKey(key);
     const stored = this.dataStore.tables[kstr];
     if (!stored || !stored.ratios || stored.ratios.length !== colCount) return;
+    if (stored.tablePxWidth && stored.tablePxWidth > 0) {
+      (table.style as any).width = `${Math.floor(stored.tablePxWidth)}px`;
+    }
     let w = table.getBoundingClientRect().width;
-    if (!w || w <= 0) w = stored.lastPxWidth || 0;
+    if (!w || w <= 0) w = stored.lastPxWidth || stored.tablePxWidth || 0;
     if (!w || w <= 0) return;
     const px = stored.ratios.map(r => Math.max(this.settings.minColumnWidthPx, Math.round(r * w)));
     this.applyColWidths(cols, px);
@@ -715,6 +843,21 @@ class TableDragSettingTab extends PluginSettingTab {
         const n = parseInt(v, 10);
         if (!Number.isNaN(n) && n > 0) { this.plugin.settings.rowKeyboardStepPx = n; await this.plugin.saveSettings(); }
       }));
+
+    // Outer width handle
+    containerEl.createEl('h3', { text: 'Outer width handle' });
+    new Setting(containerEl)
+      .setName('Show outer width handle')
+      .setDesc('Displays a grab handle outside the right edge to grow/shrink table width beyond readable line length')
+      .addToggle((t) => t.setValue(this.plugin.settings.showOuterWidthHandle).onChange(async (v) => { this.plugin.settings.showOuterWidthHandle = v; await this.plugin.saveSettings(); }));
+    new Setting(containerEl)
+      .setName('Outer handle mode')
+      .setDesc('edge = split growth between first and last columns; scale = scale all columns')
+      .addDropdown((d) => d.addOptions({ edge: 'Edge columns', scale: 'Scale all' }).setValue(this.plugin.settings.outerHandleMode).onChange(async (v) => { this.plugin.settings.outerHandleMode = v as any; await this.plugin.saveSettings(); }));
+    new Setting(containerEl)
+      .setName('Outer max width (px, 0 = unlimited)')
+      .setDesc('Caps how wide a table can grow when dragging the outer handle')
+      .addText((t) => t.setPlaceholder('0').setValue(String(this.plugin.settings.outerMaxWidthPx)).onChange(async (v) => { const n = parseInt(v,10); if (!Number.isNaN(n) && n >= 0) { this.plugin.settings.outerMaxWidthPx = n; await this.plugin.saveSettings(); } }));
 
     new Setting(containerEl)
       .setName('Double-click action')
