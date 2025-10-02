@@ -246,31 +246,31 @@ export default class TableDragPlugin extends Plugin {
       });
     }
 
-    // Place handles on header cells when possible, otherwise first row's cells
-    const headerRow = table.querySelector('thead tr') as HTMLTableRowElement | null;
-    const row = headerRow ?? (table.querySelector('tr') as HTMLTableRowElement | null);
-    if (!row) return;
-    const cells = Array.from(row.cells) as HTMLTableCellElement[];
+    // Column handles appended to table so they span full height and are clickable along entire column boundary
+    const positionColumnHandles = () => {
+      const widths = getColWidths(cols);
+      const tRect = table.getBoundingClientRect();
+      let acc = 0;
+      for (let i = 0; i < colCount - 1; i++) {
+        acc += Math.max(0, widths[i]);
+        const ch = table.querySelector('.otd-chandle[data-otd-index="'+i+'"]') as HTMLDivElement | null;
+        if (!ch) continue;
+        ch.style.top = '0px';
+        ch.style.left = `${Math.max(0, acc - 3)}px`;
+        ch.style.height = `${Math.max(0, tRect.height)}px`;
+      }
+    };
 
-    for (let i = 0; i < Math.min(colCount - 1, cells.length - 0); i++) {
-      const cell = cells[i];
-      cell.classList.add('otd-th');
-      let handle = cell.querySelector('.otd-handle[data-otd-index="'+i+'"]') as HTMLDivElement | null;
+    for (let i = 0; i < colCount - 1; i++) {
+      let handle = table.querySelector('.otd-chandle[data-otd-index="'+i+'"]') as HTMLDivElement | null;
       if (!handle) {
         handle = document.createElement('div');
-        handle.className = 'otd-handle';
+        handle.className = 'otd-chandle';
         handle.setAttribute('data-otd-index', String(i));
         handle.setAttribute('role', 'separator');
         handle.setAttribute('aria-label', `Resize column ${i + 1}`);
         handle.tabIndex = 0;
-        cell.appendChild(handle);
-      }
-
-      // Make the handle span the full table height for discoverability
-      {
-        const tRect = table.getBoundingClientRect();
-        const cRect = cell.getBoundingClientRect();
-        layoutHandleToTableWithRects(handle, tRect, cRect);
+        table.appendChild(handle);
       }
 
       let startX = 0;
@@ -284,20 +284,19 @@ export default class TableDragPlugin extends Plugin {
         const total = leftWidth + rightWidth;
         const disableSnap = ev.ctrlKey || (ev as any).metaKey;
         const { newLeft, newRight } = applyDeltaWithSnap(leftWidth, rightWidth, total, dx, this.settings.minColumnWidthPx, this.settings.snapStepPx, disableSnap);
-        // Update widths live
         const cur = getColWidths(cols);
         cur[i] = newLeft;
         cur[i + 1] = newRight;
         this.applyColWidths(cols, cur);
+        positionColumnHandles();
       };
 
       const onPointerUp = (_ev: PointerEvent) => {
         if (!active) return;
         active = false;
-        handle.releasePointerCapture((_ev as any).pointerId);
+        handle!.releasePointerCapture((_ev as any).pointerId);
         window.removeEventListener('pointermove', onPointerMove);
         window.removeEventListener('pointerup', onPointerUp);
-        // Persist ratios
         const finalPx = getColWidths(cols);
         const ratios = normalizeRatios(finalPx);
         this.dataStore.tables[resolvedKeyStr] = { ratios, lastPxWidth: containerWidth, updatedAt: Date.now() };
@@ -305,16 +304,14 @@ export default class TableDragPlugin extends Plugin {
         void this.saveDataStore();
       };
 
-      // Pointer drag
       handle.addEventListener('pointerdown', (ev: PointerEvent) => {
-        if (this.settings.requireAltToDrag && !ev.altKey) return; // require modifier if configured
+        if (this.settings.requireAltToDrag && !ev.altKey) return;
         ev.preventDefault();
         ev.stopPropagation();
         active = true;
         startX = ev.clientX;
-        handle.setPointerCapture((ev as any).pointerId);
-        handle.focus();
-        // remember last active table/key for materialization
+        handle!.setPointerCapture((ev as any).pointerId);
+        handle!.focus();
         this.lastActiveTableEl = table;
         this.lastActiveKey = key;
         const cur = getColWidths(cols);
@@ -324,11 +321,8 @@ export default class TableDragPlugin extends Plugin {
         window.addEventListener('pointerup', onPointerUp, { passive: true });
       });
 
-      // Double-click: autofit column
       handle.addEventListener('dblclick', (ev: MouseEvent) => {
-        // remember last active
-        this.lastActiveTableEl = table;
-        this.lastActiveKey = key;
+        this.lastActiveTableEl = table; this.lastActiveKey = key;
         ev.preventDefault();
         const cur = getColWidths(cols);
         const total = cur[i] + cur[i + 1];
@@ -336,25 +330,20 @@ export default class TableDragPlugin extends Plugin {
           const targetWidth = Math.max(this.settings.minColumnWidthPx, measureAutofitWidth(table, i));
           const delta = targetWidth - cur[i];
           const { newLeft, newRight } = applyDeltaWithSnap(cur[i], cur[i + 1], total, delta, this.settings.minColumnWidthPx, this.settings.snapStepPx, false);
-          cur[i] = newLeft; cur[i + 1] = newRight;
+          cur[i] = newLeft; cur[i + 1] = newRight; this.applyColWidths(cols, cur);
         } else if (this.settings.doubleClickAction === 'reset') {
           const half = Math.max(this.settings.minColumnWidthPx, Math.floor(total / 2));
-          cur[i] = half; cur[i + 1] = total - half;
-        } else {
-          return;
+          cur[i] = half; cur[i + 1] = total - half; this.applyColWidths(cols, cur);
         }
-        this.applyColWidths(cols, cur);
         const ratios = normalizeRatios(cur);
         this.dataStore.tables[resolvedKeyStr] = { ratios, lastPxWidth: containerWidth, updatedAt: Date.now() };
         this.log('persist-dblclick', { key: resolvedKeyStr, ratios });
         void this.saveDataStore();
+        positionColumnHandles();
       });
 
-      // Keyboard support
       handle.addEventListener('keydown', (ev: KeyboardEvent) => {
-        // remember last active
-        this.lastActiveTableEl = table;
-        this.lastActiveKey = key;
+        this.lastActiveTableEl = table; this.lastActiveKey = key;
         const cur = getColWidths(cols);
         const total = cur[i] + cur[i + 1];
         let used = false;
@@ -377,24 +366,24 @@ export default class TableDragPlugin extends Plugin {
           }
         }
         if (used) {
-          ev.preventDefault();
-          this.applyColWidths(cols, cur);
+          ev.preventDefault(); this.applyColWidths(cols, cur);
           const ratios = normalizeRatios(cur);
           this.dataStore.tables[resolvedKeyStr] = { ratios, lastPxWidth: containerWidth, updatedAt: Date.now() };
           this.log('persist-keyboard', { key: resolvedKeyStr, ratios });
           void this.saveDataStore();
+          positionColumnHandles();
         }
       });
     }
 
+    // Position column handles initially
+    positionColumnHandles();
     // Row resize handles
     if (this.settings.enableRowResize) {
       const rows = Array.from(table.rows) as HTMLTableRowElement[];
       rows.forEach((row, rIndex) => {
-        // Append row handle to the first cell to own positioning context
-        const firstCell = row.cells[0] as HTMLTableCellElement | undefined;
-        if (!firstCell) return;
-        let rHandle = firstCell.querySelector('.otd-rhandle[data-otd-row-index="'+rIndex+'"]') as HTMLDivElement | null;
+        // Append row handle directly to the table to span full width
+        let rHandle = table.querySelector('.otd-rhandle[data-otd-row-index="'+rIndex+'"]') as HTMLDivElement | null;
         if (!rHandle) {
           rHandle = document.createElement('div') as HTMLDivElement;
           rHandle.className = 'otd-rhandle';
@@ -402,16 +391,14 @@ export default class TableDragPlugin extends Plugin {
           rHandle.setAttribute('role', 'separator');
           rHandle.setAttribute('aria-label', `Resize row ${rIndex + 1}`);
           rHandle.setAttribute('data-otd-row-index', String(rIndex));
-          firstCell.style.position = firstCell.style.position || 'relative';
-          firstCell.appendChild(rHandle);
+          table.appendChild(rHandle);
         }
 
         // Initial layout
         {
           const tRect = table.getBoundingClientRect();
-          const cRect = firstCell.getBoundingClientRect();
           const rRect = row.getBoundingClientRect();
-          layoutRowHandleWithRects(rHandle, tRect, cRect, rRect);
+          layoutRowHandleWithRects(rHandle, tRect, rRect);
         }
 
         let startY = 0;
@@ -480,24 +467,25 @@ export default class TableDragPlugin extends Plugin {
       requestAnimationFrame(() => {
         layoutPending = false;
         const tRect = table.getBoundingClientRect();
-        const handles = table.querySelectorAll('.otd-handle');
-        handles.forEach((h) => {
-          const idx = Number((h as HTMLElement).getAttribute('data-otd-index'));
-          const cell = cells[idx];
-          if (!cell) return;
-          const cRect = cell.getBoundingClientRect();
-          layoutHandleToTableWithRects(h as HTMLElement, tRect, cRect);
-        });
+        // Reposition column handles
+        const widths = getColWidths(cols);
+        let acc = 0;
+        for (let i = 0; i < colCount - 1; i++) {
+          acc += Math.max(0, widths[i]);
+          const ch = table.querySelector('.otd-chandle[data-otd-index="'+i+'"]') as HTMLElement | null;
+          if (ch) {
+            ch.style.top = '0px';
+            ch.style.left = `${Math.max(0, acc - 3)}px`;
+            ch.style.height = `${Math.max(0, tRect.height)}px`;
+          }
+        }
         if (this.settings.enableRowResize) {
           const rows = Array.from(table.rows) as HTMLTableRowElement[];
           rows.forEach((row, rIndex) => {
-            const firstCell = row.cells[0] as HTMLTableCellElement | undefined;
-            if (!firstCell) return;
-            const rHandle = firstCell.querySelector('.otd-rhandle[data-otd-row-index="'+rIndex+'"]') as HTMLElement | null;
+            const rHandle = table.querySelector('.otd-rhandle[data-otd-row-index="'+rIndex+'"]') as HTMLElement | null;
             if (!rHandle) return;
-            const cRect = firstCell.getBoundingClientRect();
             const rRect = row.getBoundingClientRect();
-            layoutRowHandleWithRects(rHandle, tRect, cRect, rRect);
+            layoutRowHandleWithRects(rHandle, tRect, rRect);
           });
         }
       });
@@ -806,12 +794,12 @@ function layoutHandleToTableWithRects(handle: HTMLElement, tableRect: DOMRect, c
   handle.style.height = `${Math.max(0, tableRect.height)}px`;
 }
 
-function layoutRowHandleWithRects(handle: HTMLElement, tableRect: DOMRect, firstCellRect: DOMRect, rowRect: DOMRect) {
-  // Position at the row's bottom edge across full table width
-  const top = rowRect.bottom - firstCellRect.top - (handle.getBoundingClientRect().height || 6);
-  const left = tableRect.left - firstCellRect.left;
+function layoutRowHandleWithRects(handle: HTMLElement, tableRect: DOMRect, rowRect: DOMRect) {
+  // Position at the row's bottom edge across full table width relative to table
+  const h = (handle.getBoundingClientRect().height || 6);
+  const top = rowRect.bottom - tableRect.top - h;
   handle.style.top = `${Math.max(0, top)}px`;
-  handle.style.left = `${left}px`;
+  handle.style.left = `0px`;
   handle.style.width = `${Math.max(0, tableRect.width)}px`;
 }
 
