@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-table-drag",
+  "name": "Obsidian Table Drag",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Drag-to-resize Markdown table columns (and optional rows) in Reading view and Live Preview.",
+  "author": "Daniel + Agent Mode",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}

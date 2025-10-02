@@ -1,0 +1,16 @@
+.otd-handle{position:absolute;top:0;right:-3px;width:6px;height:100%;cursor:col-resize;background:transparent;z-index:5;}
+.otd-handle:hover{background:var(--background-modifier-hover);} 
+.otd-handle:focus{outline:1px solid var(--interactive-accent);background:var(--background-modifier-hover);}
+.otd-handle:active{background:var(--interactive-accent);opacity:0.5;}
+/* Make cells positioning context only when needed; we now stretch handles to table height via JS */
+.otd-th{position:relative;}
+/* Optional: thicker hit area on touch */
+@media (pointer:coarse){.otd-handle{width:10px;right:-5px;}}
+
+/* Wrapping support for long text/URLs when enabled */
+table.otd-wrap td, table.otd-wrap th{
+  white-space: normal;
+  overflow-wrap: anywhere; /* allows breaking long unspaced strings */
+  word-break: break-word;  /* compatible fallback */
+  hyphens: auto;
+}
