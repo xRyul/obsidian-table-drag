@@ -244,3 +244,35 @@ Next hardening:
 - Sync guidance: enable 'Sync plugin data' (Obsidian Sync) or include .obsidian/plugins/obsidian-table-drag/data.json in your VCS/cloud sync.
 - Debugging: toggle with `localStorage.setItem('otd-debug','1')` to see resolved keys and stored status.
 - Caveats: if headers/column count change, fingerprint changes; prior widths won't apply by design (treated as a different table).
+
+
+---
+### Phase 4 — Row Resizing (2025-10-02)
+Implemented:
+- Horizontal row handles (bottom edge) to adjust row heights by drag or keyboard.
+- Persistence: per-row height stored under the table’s canonical key (rowHeights[rowIndex]).
+- Settings: Enable row resizing, Row minimum height (px), Row keyboard step (px).
+- A11y: handles are focusable separators with keyboard support.
+
+Notes:
+- We set row.style.height; content larger than this will expand the row naturally.
+- Wrapping and content changes may increase effective row height beyond the stored value.
+- Known limits: min-height on table-cell is inconsistently respected across engines; this approach avoids clipping.
+
+
+---
+### Phase 5 — Materialize Widths (2025-10-02)
+Implemented (opt-in):
+- Command: "Materialize widths: insert HTML copy of last active table" — inserts an HTML <table> with <colgroup> (percent widths) at the cursor.
+- Command: "Materialize widths: copy HTML of last active table" — copies HTML to clipboard.
+- Uses canonical table key (path + fingerprint) and stored ratios to create <colgroup> widths.
+- Idempotent: builds fresh HTML regardless of runtime DOM; does not modify the original Markdown table.
+
+Usage:
+1) Interact with a table (click/drag/keyboard) so it becomes the "last active" table.
+2) Run one of the commands to insert or copy the materialized HTML.
+
+Notes:
+- This avoids surprising in-place mutations to Markdown, preserving the original content; users can replace the Markdown table manually if desired.
+- Percent widths are used so the materialized table remains responsive.
+- Reversion is trivial (delete the HTML block) since the source Markdown table is left intact.
