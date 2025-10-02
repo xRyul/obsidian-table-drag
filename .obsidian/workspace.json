@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "docs/Implementation Guidelines & Antipatterns.md",
+                "file": "docs/Phased Implementation Plan.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "Implementation Guidelines & Antipatterns"
+              "title": "Phased Implementation Plan"
             }
           }
         ]
@@ -168,8 +168,8 @@
   },
   "active": "15dc8daea6a2be2d",
   "lastOpenFiles": [
-    "docs/Phased Implementation Plan.md",
     "docs/Implementation Guidelines & Antipatterns.md",
+    "docs/Phased Implementation Plan.md",
     "docs/01-initial-idea.md",
     "notes/Planned Plugin - Obsidian Table Drag.md",
     "src/cm6/tableResizeExtension.ts",

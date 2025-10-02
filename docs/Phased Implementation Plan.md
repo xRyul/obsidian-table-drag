@@ -276,3 +276,31 @@ Notes:
 - This avoids surprising in-place mutations to Markdown, preserving the original content; users can replace the Markdown table manually if desired.
 - Percent widths are used so the materialized table remains responsive.
 - Reversion is trivial (delete the HTML block) since the source Markdown table is left intact.
+
+
+---
+### Performance Hardening Plan — Viewport-limited scanning & handle reuse (to implement)
+Rationale
+- Reduce DOM work and CPU usage for large notes with many tables
+- Avoid re-creating handles during frequent Live Preview re-renders
+
+Plan
+1) Viewport-limited scanning (Live Preview)
+   - Use IntersectionObserver on editor scrollDOM to detect visible tables
+   - Bind resizers only for tables intersecting viewport (+margin)
+   - Unbind/park resizers for offscreen tables
+   - Add perf debug logs: activeTables, parkedTables, observer callbacks
+
+2) Handle reuse / pooling
+   - Maintain per-editor pools for vertical (column) and horizontal (row) handles
+   - On table activation: borrow N handles and position them
+   - On deactivation: return handles to pool (hidden) instead of removing
+   - Add perf counters: allocatedHandles, pooledHandles, reuseHits
+
+Success criteria
+- Scrolling long documents remains smooth (no jank)
+- Typing incurs minimal observer/DOM updates
+- Diagnostics show handle reuse > 80% after warm-up
+
+Notes
+- Behavior remains identical to current UX; this is a pure perf improvement.
