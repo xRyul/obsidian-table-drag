@@ -144,12 +144,14 @@ export class ColumnHandleManager {
       window.removeEventListener('pointerup', onPointerUp);
       const finalPx = getColWidths(cols);
       const ratios = normalizeRatios(finalPx);
+      const total = finalPx.reduce((a, b) => a + b, 0);
       this.storage.dataStore.tables[resolvedKeyStr] = {
         ratios,
         lastPxWidth: containerWidth,
+        tablePxWidth: total,
         updatedAt: Date.now(),
       };
-      this.log('persist-drag', { key: resolvedKeyStr, ratios });
+      this.log('persist-drag', { key: resolvedKeyStr, ratios, total });
       void this.storage.saveDataStore();
     };
 
@@ -173,14 +175,14 @@ export class ColumnHandleManager {
       if (onActiveTable) onActiveTable(table, key);
       ev.preventDefault();
       const cur = getColWidths(cols);
-      const total = cur[colIndex] + cur[colIndex + 1];
+      const pairTotal = cur[colIndex] + cur[colIndex + 1];
       if (this.settings.doubleClickAction === 'autofit') {
         const targetWidth = measureAutofitWidth(table, colIndex, this.settings.minColumnWidthPx);
         const delta = targetWidth - cur[colIndex];
         const { newLeft, newRight } = applyDeltaWithSnap(
           cur[colIndex],
           cur[colIndex + 1],
-          total,
+          pairTotal,
           delta,
           this.settings.minColumnWidthPx,
           this.settings.snapStepPx,
@@ -190,18 +192,20 @@ export class ColumnHandleManager {
         cur[colIndex + 1] = newRight;
         applyColWidths(cur);
       } else if (this.settings.doubleClickAction === 'reset') {
-        const half = Math.max(this.settings.minColumnWidthPx, Math.floor(total / 2));
+        const half = Math.max(this.settings.minColumnWidthPx, Math.floor(pairTotal / 2));
         cur[colIndex] = half;
-        cur[colIndex + 1] = total - half;
+        cur[colIndex + 1] = pairTotal - half;
         applyColWidths(cur);
       }
       const ratios = normalizeRatios(cur);
+      const sumTotal = cur.reduce((a, b) => a + b, 0);
       this.storage.dataStore.tables[resolvedKeyStr] = {
         ratios,
         lastPxWidth: containerWidth,
+        tablePxWidth: sumTotal,
         updatedAt: Date.now(),
       };
-      this.log('persist-dblclick', { key: resolvedKeyStr, ratios });
+      this.log('persist-dblclick', { key: resolvedKeyStr, ratios, total: sumTotal });
       void this.storage.saveDataStore();
       positionHandles();
     });
@@ -209,14 +213,14 @@ export class ColumnHandleManager {
     this.plugin.registerDomEvent(handle, 'keydown', (ev: KeyboardEvent) => {
       if (onActiveTable) onActiveTable(table, key);
       const cur = getColWidths(cols);
-      const total = cur[colIndex] + cur[colIndex + 1];
+      const pairTotal = cur[colIndex] + cur[colIndex + 1];
       let used = false;
       const step = ev.ctrlKey || (ev as any).metaKey ? 1 : this.settings.keyboardStepPx;
       if (ev.key === 'ArrowLeft') {
         const { newLeft, newRight } = applyDeltaWithSnap(
           cur[colIndex],
           cur[colIndex + 1],
-          total,
+          pairTotal,
           -step,
           this.settings.minColumnWidthPx,
           this.settings.snapStepPx,
@@ -229,7 +233,7 @@ export class ColumnHandleManager {
         const { newLeft, newRight } = applyDeltaWithSnap(
           cur[colIndex],
           cur[colIndex + 1],
-          total,
+          pairTotal,
           step,
           this.settings.minColumnWidthPx,
           this.settings.snapStepPx,
@@ -245,7 +249,7 @@ export class ColumnHandleManager {
           const res = applyDeltaWithSnap(
             cur[colIndex],
             cur[colIndex + 1],
-            total,
+            pairTotal,
             delta,
             this.settings.minColumnWidthPx,
             this.settings.snapStepPx,
@@ -255,9 +259,9 @@ export class ColumnHandleManager {
           cur[colIndex + 1] = res.newRight;
           used = true;
         } else if (this.settings.doubleClickAction === 'reset') {
-          const half = Math.max(this.settings.minColumnWidthPx, Math.floor(total / 2));
+          const half = Math.max(this.settings.minColumnWidthPx, Math.floor(pairTotal / 2));
           cur[colIndex] = half;
-          cur[colIndex + 1] = total - half;
+          cur[colIndex + 1] = pairTotal - half;
           used = true;
         }
       }
@@ -265,12 +269,14 @@ export class ColumnHandleManager {
         ev.preventDefault();
         applyColWidths(cur);
         const ratios = normalizeRatios(cur);
+        const sumTotal = cur.reduce((a, b) => a + b, 0);
         this.storage.dataStore.tables[resolvedKeyStr] = {
           ratios,
           lastPxWidth: containerWidth,
+          tablePxWidth: sumTotal,
           updatedAt: Date.now(),
         };
-        this.log('persist-keyboard', { key: resolvedKeyStr, ratios });
+        this.log('persist-keyboard', { key: resolvedKeyStr, ratios, total: sumTotal });
         void this.storage.saveDataStore();
         positionHandles();
       }

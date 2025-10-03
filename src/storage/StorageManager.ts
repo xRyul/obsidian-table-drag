@@ -70,4 +70,26 @@ export class StorageManager {
     this.dataStore.tables = updates;
     void this.saveDataStore();
   }
+
+  /**
+   * Get the most recent saved table sizes entry for a given file path, regardless of fingerprint.
+   * Useful for adapting widths when the table structure (column count/headers) changes.
+   */
+  getLatestForPath(path: string): { key: TableKey, keyStr: string, sizes: TableSizes } | null {
+    let best: { key: TableKey, keyStr: string, sizes: TableSizes } | null = null;
+    let bestTs = -1;
+    for (const [k, v] of Object.entries(this.dataStore.tables)) {
+      try {
+        const keyObj = JSON.parse(k) as TableKey;
+        if (keyObj.path !== path) continue;
+        const sizes = v as TableSizes;
+        const ts = typeof sizes?.updatedAt === 'number' ? sizes.updatedAt : 0;
+        if (ts > bestTs) {
+          best = { key: keyObj, keyStr: k, sizes };
+          bestTs = ts;
+        }
+      } catch {}
+    }
+    return best;
+  }
 }

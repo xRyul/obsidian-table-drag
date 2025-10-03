@@ -46,7 +46,8 @@ export function tableResizeExtension(plugin: TableDragPlugin) {
                   const fp = plugin.computeFingerprint(t);
                   const key = { path, lineStart: -1, lineEnd: -1, fingerprint: fp } as TableKey;
                   // Immediate apply using pixel widths based on current container
-                  t.classList.add('otd-managed');
+                  // Note: Do NOT pre-add 'otd-managed' here, as it forces table-layout: fixed
+                  // and corrupts intrinsic header measurements used for initial/fallback sizing.
                   plugin.applyStoredRatiosPx(t, key);
                   plugin.scheduleBreakoutForTable(t);
                   if (plugin.settings.enableDebugLogs) plugin.debug?.log('lp-mutation-apply', { path, fp });
