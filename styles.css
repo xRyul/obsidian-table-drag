@@ -29,9 +29,26 @@ table.otd-wrap td *, table.otd-wrap th *{
 table.otd-managed td, table.otd-managed th{ overflow: visible; }
 
 /* Stabilize layout during LP mutations */
-table.otd-managed{ table-layout: fixed; width: 100%; position: relative; }
+table.otd-managed{ table-layout: fixed; position: relative; }
 /* Parked (offscreen) tables disable handle hit-testing */
 table.otd-inactive .otd-chandle, table.otd-inactive .otd-rhandle, table.otd-inactive .otd-ohandle{ pointer-events: none; }
+
+/* Breakout wrapper: expands to pane width and provides horizontal scroll when table exceeds pane */
+.otd-breakout-wrap{ position: relative; display: flex; justify-content: center; overflow-x: visible; overflow-y: visible; }
+/* We set margins and width inline for precision; these are fallbacks */
+.otd-breakout-wrap{ max-width: 100%; }
+/* When wrapping a CM6 table widget, prevent its own scrollbars and width limits, and allow it to shrink-to-content */
+.otd-breakout-wrap > .cm-table-widget{ overflow: visible !important; max-width: none !important; width: max-content !important; }
+/* Live Preview (no wrapper): allow the widget to sit above margins and center */
+.cm-table-widget.otd-breakout-cm{ display: flex; justify-content: center; overflow-y: visible; position: relative; z-index: 1; max-width: none; will-change: transform; }
+.cm-table-widget.otd-breakout-cm > *{ flex: 0 0 auto; }
+/* Reading view: center the table and allow shrink-to-content */
+.otd-breakout-wrap > table{ margin-left: auto; margin-right: auto; width: max-content; }
+/* Ensure handles render above the wrapper overflow */
+table.otd-managed .otd-chandle, table.otd-managed .otd-ohandle, table.otd-managed .otd-rhandle{ z-index: 70; }
+
+/* Prevent global horizontal scrollbar in Live Preview; breakouts scroll inside themselves */
+.cm-scroller{ overflow-x: hidden !important; }
 
 /* Row resize handle */
 .otd-rhandle{position:absolute;left:0;width:100%;height:6px;cursor:row-resize;background:transparent;z-index:60;}

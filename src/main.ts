@@ -33,6 +33,9 @@ interface TableDragSettings {
   showOuterWidthHandle: boolean;
   outerHandleMode: 'edge' | 'scale';
   outerMaxWidthPx: number; // 0 = unlimited
+  // Breakout padding from pane edges (prevents hugging sidebars)
+  bleedWideTables?: boolean; // when true, apply a small gutter on both sides in breakout
+  bleedGutterPx?: number;    // size of the gutter on each side
   // Diagnostics
   enableDebugLogs: boolean;
   debugVerbose: boolean;
@@ -52,6 +55,8 @@ const DEFAULT_SETTINGS: TableDragSettings = {
   showOuterWidthHandle: true,
   outerHandleMode: 'edge',
   outerMaxWidthPx: 0,
+  bleedWideTables: true,
+  bleedGutterPx: 16,
   enableDebugLogs: false,
   debugVerbose: false,
   debugBufferSize: 500,
@@ -63,6 +68,214 @@ export default class TableDragPlugin extends Plugin {
   private lastActiveTableEl: HTMLTableElement | null = null;
   private lastActiveKey: TableKey | null = null;
   private debugBuffer: { ts: number; event: string; details?: any }[] = [];
+  // Track when the outer width handle is actively dragging to avoid auto-centering mid-drag
+  private outerDragActive = new WeakSet<HTMLTableElement>();
+
+  // Cached measurements for breakout calculations (updated per-table when needed)
+  // NOTE: Return precise left/right offsets so we can align exactly with the host pane edges.
+  private measureContextForEl(el: HTMLElement): {
+    host: 'cm6' | 'reading' | 'unknown';
+    paneWidth: number;     // full usable pane width for content (excludes gutters in LP)
+    lineWidth: number;     // readable line width
+    sideMargin: number;    // kept for backward compat; equals leftOffset
+    leftOffset: number;    // exact px from content start to pane left edge
+    rightOffset: number;   // exact px from content end to pane right edge
+  } {
+    // Try CM6 first
+    const scroller = el.closest('.cm-scroller') as HTMLElement | null;
+    const sizer = el.closest('.cm-sizer') as HTMLElement | null;
+    if (scroller && sizer) {
+      const scRect = scroller.getBoundingClientRect();
+      const paneClientW = scroller.clientWidth || scRect.width || 0; // excludes vertical scrollbar
+      // Prefer the real content width (readable line length) from .cm-content; fall back to .cm-sizer
+      const contentEl = (el.closest('.cm-content') as HTMLElement | null) || (scroller.querySelector('.cm-content') as HTMLElement | null);
+      const contentRect = contentEl?.getBoundingClientRect();
+      const lineWidth = (contentEl?.clientWidth || contentEl?.getBoundingClientRect()?.width || 0) || (sizer.clientWidth || sizer.getBoundingClientRect().width || 0);
+      // Account for gutters if present (so centering stays accurate with line numbers)
+      const gutters = scroller.querySelector('.cm-gutters') as HTMLElement | null;
+      const gutterW = gutters ? (gutters.clientWidth || gutters.getBoundingClientRect().width || 0) : 0;
+      const contentPane = Math.max(0, paneClientW - gutterW);
+      // Compute exact offsets using DOM rects to avoid padding/margin guesswork
+      let leftOffset = 0; let rightOffset = 0;
+      if (contentRect) {
+        const paneLeft = scRect.left + gutterW; // left edge of usable pane (after gutters)
+        const paneRight = scRect.left + paneClientW; // right edge of usable pane
+        leftOffset = Math.max(0, Math.round(contentRect.left - paneLeft));
+        rightOffset = Math.max(0, Math.round(paneRight - contentRect.right));
+      } else {
+        // Fallback to symmetric calc if rects not available
+        const side = Math.max(0, (contentPane - lineWidth) / 2);
+        leftOffset = side; rightOffset = side;
+      }
+      return { host: 'cm6', paneWidth: contentPane, lineWidth, sideMargin: leftOffset, leftOffset, rightOffset };
+    }
+    // Reading view fallback
+    const reading = el.closest('.markdown-reading-view, .markdown-preview-view') as HTMLElement | null;
+    const previewSizer = el.closest('.markdown-preview-sizer') as HTMLElement | null;
+    if (reading && previewSizer) {
+      const paneClientW = reading.clientWidth || reading.getBoundingClientRect().width || 0;
+      const lineWidth = previewSizer.clientWidth || previewSizer.getBoundingClientRect().width || 0;
+      const rRect = reading.getBoundingClientRect();
+      const sRect = previewSizer.getBoundingClientRect();
+      // exact offsets from the preview sizer to the reading pane's inner edges
+      const leftOffset = Math.max(0, Math.round(sRect.left - rRect.left));
+      const rightOffset = Math.max(0, Math.round(rRect.right - sRect.right));
+      return { host: 'reading', paneWidth: paneClientW, lineWidth, sideMargin: leftOffset, leftOffset, rightOffset };
+    }
+    return { host: 'unknown', paneWidth: 0, lineWidth: 0, sideMargin: 0, leftOffset: 0, rightOffset: 0 };
+  }
+
+  /** Choose the element we should wrap for breakout.
+   * In Live Preview (CM6), wrap the .cm-table-widget to avoid inner clipping/scrollbars.
+   * In Reading view, wrap the table itself.
+   */
+  private getBreakoutContainer(table: HTMLTableElement): HTMLElement {
+    return (table.closest('.cm-table-widget') as HTMLElement | null) || table;
+  }
+
+  /** Remove legacy wrapper from earlier versions (wrapper directly around <table>). */
+  private cleanupLegacyBreakout(table: HTMLTableElement) {
+    const p = table.parentElement;
+    if (p && p.classList.contains('otd-breakout-wrap')) {
+      const gp = p.parentElement;
+      if (gp) gp.insertBefore(table, p);
+      p.remove();
+    }
+  }
+
+  /** Ensure a breakout wrapper exists for the container and return it. */
+  private ensureBreakoutWrapper(table: HTMLTableElement): HTMLDivElement {
+    this.cleanupLegacyBreakout(table);
+    const container = this.getBreakoutContainer(table);
+    const parent = container.parentElement;
+    if (parent && parent.classList.contains('otd-breakout-wrap')) return parent as HTMLDivElement;
+    const wrap = document.createElement('div');
+    wrap.className = 'otd-breakout-wrap';
+    if (parent) parent.insertBefore(wrap, container);
+    wrap.appendChild(container);
+    return wrap;
+  }
+
+  /** Remove breakout wrapper if present (moves container back to original parent). */
+  private removeBreakoutWrapper(table: HTMLTableElement) {
+    // Clean legacy wrapper too
+    this.cleanupLegacyBreakout(table);
+    const container = this.getBreakoutContainer(table);
+    const wrap = container.parentElement;
+    if (wrap && wrap.classList.contains('otd-breakout-wrap')) {
+      const parent = wrap.parentElement;
+      if (parent) parent.insertBefore(container, wrap);
+      wrap.remove();
+    }
+  }
+
+  private breakoutRAF = new WeakMap<HTMLTableElement, number>();
+  /** Schedule a breakout computation for the next animation frame (coalesces bursts). */
+  public scheduleBreakoutForTable(table: HTMLTableElement) {
+    if (this.breakoutRAF.has(table)) return;
+    const id = requestAnimationFrame(() => {
+      this.breakoutRAF.delete(table);
+      this.updateBreakoutForTable(table);
+    });
+    this.breakoutRAF.set(table, id);
+  }
+
+  /**
+   * Update or remove breakout for a given table based on its intrinsic width vs readable line width.
+   * - If table is wider than the readable line width, we wrap it in a scrollable container that expands to pane width
+   *   and offsets the centered sizer margins so the table visually fills the pane.
+   * - Otherwise, we remove any wrapper and keep normal flow.
+   */
+  public updateBreakoutForTable(table: HTMLTableElement) {
+    try {
+      const ctx = this.measureContextForEl(table);
+      if (ctx.paneWidth <= 0 || ctx.lineWidth <= 0) { this.removeBreakoutWrapper(table); return; }
+      const container = this.getBreakoutContainer(table);
+      const intrinsic = Math.max(table.scrollWidth, table.offsetWidth, 0);
+      const specified = parseFloat((table.style.width || '').replace('px','')) || 0;
+      const desired = Math.max(intrinsic, specified);
+
+      if (desired > ctx.lineWidth + 1) {
+        // Optional bleed padding to avoid hugging pane edges
+        const bleed = this.settings.bleedWideTables ? Math.max(0, this.settings.bleedGutterPx || 0) : 0;
+        const leftAdj = Math.max(0, ctx.leftOffset - bleed);
+        const rightAdj = Math.max(0, ctx.rightOffset - bleed);
+        const paneAvail = Math.max(0, ctx.paneWidth - bleed*2);
+        if (ctx.host === 'cm6') {
+          // Live Preview: do NOT wrap. Expand to pane width and offset via transform (no layout overflow).
+          this.cleanupLegacyBreakout(table);
+          const targetW = `${Math.floor(paneAvail)}px`;
+          const targetTranslate = `translateX(${-Math.floor(leftAdj)}px)`;
+          const el = container as HTMLElement;
+          if (el.style.width !== targetW) el.style.width = targetW;
+          // Use transform instead of negative margins so the editor never gains a global horizontal scrollbar
+          if (el.style.transform !== targetTranslate) el.style.transform = targetTranslate;
+          // Table-only horizontal scroll when table wider than pane
+          const wantScroll = desired > paneAvail + 1 ? 'auto' : 'visible';
+          if (el.style.overflowX !== wantScroll) el.style.overflowX = wantScroll;
+          // Ensure visibility above margins
+          if (el.style.position !== 'relative') el.style.position = 'relative';
+          if (el.style.zIndex !== '1') el.style.zIndex = '1';
+          // When not overflowing the pane, pad both sides so the table stays centered visually
+          const pad = wantScroll === 'visible' ? Math.max(0, Math.floor((paneAvail - desired) / 2)) : 0;
+          if (el.style.paddingLeft !== `${pad}px`) el.style.paddingLeft = `${pad}px`;
+          if (el.style.paddingRight !== `${pad}px`) el.style.paddingRight = `${pad}px`;
+          el.classList.add('otd-breakout-cm');
+          // Center initial scroll once (not during active outer drag)
+          if (wantScroll === 'auto' && !this.outerDragActive.has(table)) {
+            if (!(el as any).dataset?.otdCentered) {
+              const center = Math.max(0, Math.floor((Math.max(el.scrollWidth, desired) - paneAvail) / 2));
+              el.scrollLeft = center;
+              (el as any).dataset = (el as any).dataset || {} as any;
+              (el as any).dataset.otdCentered = '1';
+            }
+          }
+        } else {
+          // Reading view: use a wrapper so only the table area scrolls
+          const wrap = this.ensureBreakoutWrapper(table);
+          const targetW = `${Math.floor(paneAvail)}px`;
+          const targetML = `${-Math.floor(leftAdj)}px`;
+          const targetMR = `${-Math.floor(rightAdj)}px`;
+          if (wrap.style.width !== targetW) wrap.style.width = targetW;
+          if (wrap.style.marginLeft !== targetML) wrap.style.marginLeft = targetML;
+          if (wrap.style.marginRight !== targetMR) wrap.style.marginRight = targetMR;
+          const wantScroll = desired > paneAvail + 1 ? 'auto' : 'visible';
+          if (wrap.style.overflowX !== wantScroll) wrap.style.overflowX = wantScroll;
+          // When not overflowing the pane, pad both sides so the table stays centered visually
+          const pad = wantScroll === 'visible' ? Math.max(0, Math.floor((paneAvail - desired) / 2)) : 0;
+          if (wrap.style.paddingLeft !== `${pad}px`) wrap.style.paddingLeft = `${pad}px`;
+          if (wrap.style.paddingRight !== `${pad}px`) wrap.style.paddingRight = `${pad}px`;
+          // Center initial scroll once (not during active outer drag)
+          if (wantScroll === 'auto' && !this.outerDragActive.has(table)) {
+            if (!(wrap as any).dataset?.otdCentered) {
+              const center = Math.max(0, Math.floor((Math.max((wrap as any).scrollWidth || 0, desired) - paneAvail) / 2));
+              (wrap as any).scrollLeft = center;
+              (wrap as any).dataset = (wrap as any).dataset || {} as any;
+              (wrap as any).dataset.otdCentered = '1';
+            }
+          }
+          table.classList.add('otd-breakout');
+        }
+        this.log('breakout-apply', { paneWidth: ctx.paneWidth, lineWidth: ctx.lineWidth, desired, side: ctx.sideMargin, host: ctx.host });
+      } else {
+        // Remove any CM6 inline breakout styles and wrappers
+        (container as HTMLElement).style.width = '';
+        (container as HTMLElement).style.marginLeft = '';
+        (container as HTMLElement).style.marginRight = '';
+        (container as HTMLElement).style.transform = '';
+        (container as HTMLElement).style.overflowX = '';
+        (container as HTMLElement).style.position = '';
+        (container as HTMLElement).style.zIndex = '';
+        (container as HTMLElement).style.paddingLeft = '';
+        (container as HTMLElement).style.paddingRight = '';
+        container.classList.remove('otd-breakout-cm');
+        this.removeBreakoutWrapper(table);
+        table.classList.remove('otd-breakout');
+      }
+    } catch (e) {
+      // Non-fatal
+    }
+  }
 
   async onload() {
     await this.loadDataStore();
@@ -182,6 +395,15 @@ export default class TableDragPlugin extends Plugin {
 
     // Prefer canonical key (path + normalized fingerprint). Migrate older keys if present.
     const resolvedKeyStr = this.findOrMigrateToCanonicalKey(key);
+
+    // If already bound, just re-apply stored widths and ensure breakout; avoid re-attaching observers/handles
+    if (alreadyBound) {
+      try {
+        this.applyStoredRatiosPx(table, key);
+        this.updateBreakoutForTable(table);
+      } catch {}
+      return;
+    }
 
     // Determine column count from first row with max cells
     const colCount = Math.max(0, ...Array.from(table.rows).map((r) => r.cells.length));
@@ -389,6 +611,9 @@ export default class TableDragPlugin extends Plugin {
     // Position column handles initially
     positionColumnHandles();
 
+    // Apply breakout layout if needed initially
+    this.scheduleBreakoutForTable(table);
+
     // Outer width handle (grow beyond readable line length)
     if (this.settings.showOuterWidthHandle) {
       let ohandle = table.querySelector('.otd-ohandle') as HTMLDivElement | null;
@@ -405,7 +630,9 @@ export default class TableDragPlugin extends Plugin {
         const tRect = table.getBoundingClientRect();
         ohandle!.style.top = '0px';
         ohandle!.style.height = `${Math.max(0, tRect.height)}px`;
-        ohandle!.style.right = '-8px';
+        // Keep the handle mostly inside the table so it's always clickable when not overflowing.
+        // CSS default is right:-2px with width:10px -> 8px inside, 2px outside.
+        ohandle!.style.right = '-2px';
       };
       positionOuter();
 
@@ -441,12 +668,38 @@ export default class TableDragPlugin extends Plugin {
         }
         this.applyColWidths(cols, next);
         (table.style as any).width = `${Math.floor(targetTotal)}px`;
+        // Keep the table visually centered while dragging by adjusting scrollLeft symmetrically
+        try {
+          const ctxD = this.measureContextForEl(table);
+          const bleed = this.settings.bleedWideTables ? Math.max(0, this.settings.bleedGutterPx || 0) : 0;
+          const paneAvail = Math.max(0, ctxD.paneWidth - bleed*2);
+          const cmWrap = table.closest('.cm-table-widget') as HTMLElement | null;
+          const rvWrap = (table.parentElement && table.parentElement.classList.contains('otd-breakout-wrap')) ? table.parentElement as HTMLElement : null;
+          const scrollEl = cmWrap || rvWrap;
+          this.log('outer-drag-center', { targetTotal, paneAvail, cmWrap: !!cmWrap, rvWrap: !!rvWrap, scrollEl: !!scrollEl, host: ctxD.host });
+          if (scrollEl) {
+            if (targetTotal > paneAvail + 1) {
+              const center = Math.max(0, Math.floor((targetTotal - paneAvail) / 2));
+              const oldScroll = scrollEl.scrollLeft;
+              if (Math.abs(scrollEl.scrollLeft - center) > 1) {
+                scrollEl.scrollLeft = center;
+                this.log('outer-drag-scroll', { oldScroll, newScroll: center, targetTotal, paneAvail });
+              }
+            } else if (scrollEl.scrollLeft !== 0) {
+              scrollEl.scrollLeft = 0;
+              this.log('outer-drag-reset-scroll', { targetTotal, paneAvail });
+            }
+          }
+        } catch (e) { this.log('outer-drag-center-error', e); }
+        // Update breakout wrapper while dragging so visuals track
+        this.scheduleBreakoutForTable(table);
         positionColumnHandles();
         positionOuter();
       };
       const onOUp = (_ev: PointerEvent) => {
         if (!active) return;
         active = false;
+        this.outerDragActive.delete(table);
         ohandle!.releasePointerCapture((_ev as any).pointerId);
         window.removeEventListener('pointermove', onOMove);
         window.removeEventListener('pointerup', onOUp);
@@ -454,6 +707,7 @@ export default class TableDragPlugin extends Plugin {
         const total = finalPx.reduce((a,b)=>a+b,0);
         const ratios = normalizeRatios(finalPx);
         this.dataStore.tables[resolvedKeyStr] = { ratios, lastPxWidth: total, tablePxWidth: total, updatedAt: Date.now() };
+        this.scheduleBreakoutForTable(table);
         this.log('outer-drag', { key: resolvedKeyStr, mode: this.settings.outerHandleMode, total });
         void this.saveDataStore();
       };
@@ -462,6 +716,7 @@ export default class TableDragPlugin extends Plugin {
         active = true;
         startX = ev.clientX;
         startPx = getColWidths(cols);
+        this.outerDragActive.add(table);
         ohandle!.setPointerCapture((ev as any).pointerId);
         this.log('outer-ptrdown', { key: resolvedKeyStr, startPx, startX });
         window.addEventListener('pointermove', onOMove, { passive: true });
@@ -496,6 +751,24 @@ export default class TableDragPlugin extends Plugin {
         }
         this.applyColWidths(cols, next);
         (table.style as any).width = `${Math.floor(targetTotal)}px`;
+        // Keep centered while using keyboard adjustments
+        try {
+          const ctxD = this.measureContextForEl(table);
+          const bleed = this.settings.bleedWideTables ? Math.max(0, this.settings.bleedGutterPx || 0) : 0;
+          const paneAvail = Math.max(0, ctxD.paneWidth - bleed*2);
+          const cmWrap = table.closest('.cm-table-widget') as HTMLElement | null;
+          const rvWrap = (table.parentElement && table.parentElement.classList.contains('otd-breakout-wrap')) ? table.parentElement as HTMLElement : null;
+          const scrollEl = cmWrap || rvWrap;
+          if (scrollEl) {
+            if (targetTotal > paneAvail + 1) {
+              const center = Math.max(0, Math.floor((targetTotal - paneAvail) / 2));
+              if (Math.abs(scrollEl.scrollLeft - center) > 1) scrollEl.scrollLeft = center;
+            } else if (scrollEl.scrollLeft !== 0) {
+              scrollEl.scrollLeft = 0;
+            }
+          }
+        } catch {}
+        this.updateBreakoutForTable(table);
         const ratios = normalizeRatios(next);
         this.dataStore.tables[resolvedKeyStr] = { ratios, lastPxWidth: targetTotal, tablePxWidth: targetTotal, updatedAt: Date.now() };
         void this.saveDataStore();
@@ -613,9 +886,22 @@ export default class TableDragPlugin extends Plugin {
             layoutRowHandleWithRects(rHandle, tRect, rRect);
           });
         }
+        // Re-evaluate breakout when table size changes
+        this.scheduleBreakoutForTable(table);
       });
     });
     ro.observe(table);
+
+    // Also watch the host pane/scroller for width changes (sidebars, window resize, readable width toggle)
+    const hostToObserve = (table.closest('.cm-scroller') as HTMLElement | null) || (table.closest('.markdown-reading-view, .markdown-preview-view') as HTMLElement | null);
+    if (hostToObserve) {
+      const roPane = new ResizeObserver(() => {
+        // Only recompute breakout; table's own RO will reposition handles if size changed
+        this.updateBreakoutForTable(table);
+      });
+      roPane.observe(hostToObserve);
+      this.register(() => roPane.disconnect());
+    }
 
     table.setAttribute('data-otd-bound', '1');
   }

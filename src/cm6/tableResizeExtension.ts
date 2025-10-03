@@ -8,6 +8,7 @@ export function tableResizeExtension(plugin: TableDragPlugin) {
       private view: EditorView;
       private mo: MutationObserver;
       private io: IntersectionObserver;
+      private roPane: ResizeObserver;
       private observed = new Set<HTMLTableElement>();
       private active = new Set<HTMLTableElement>();
 
@@ -20,6 +21,11 @@ export function tableResizeExtension(plugin: TableDragPlugin) {
           threshold: 0
         });
         this.scan();
+        // Observe pane resize (sidebars, window resize, readable width toggle)
+        this.roPane = new ResizeObserver(() => {
+          this.active.forEach(t => plugin.scheduleBreakoutForTable(t));
+        });
+        this.roPane.observe(this.view.scrollDOM);
         // Observe DOM changes in Live Preview to rescan when tables render/update
         this.mo = new MutationObserver((muts) => {
           const file = plugin.app.workspace.getActiveFile();
@@ -42,6 +48,7 @@ export function tableResizeExtension(plugin: TableDragPlugin) {
                   // Immediate apply using pixel widths based on current container
                   t.classList.add('otd-managed');
                   plugin.applyStoredRatiosPx(t, key);
+                  plugin.scheduleBreakoutForTable(t);
                   if (plugin.settings.enableDebugLogs) plugin['log']?.('lp-mutation-apply', { path, fp });
                 }
               }
@@ -66,6 +73,7 @@ export function tableResizeExtension(plugin: TableDragPlugin) {
             const key: TableKey = { path, lineStart: -1, lineEnd: -1, fingerprint: fp };
             plugin.applyStoredRatiosPx(table, key);
             plugin.attachResizersWithKey(table, key);
+            plugin.scheduleBreakoutForTable(table);
           } else {
             // Park (disable pointer events but keep DOM)
             this.active.delete(table);
@@ -95,6 +103,7 @@ export function tableResizeExtension(plugin: TableDragPlugin) {
       destroy() {
         this.mo.disconnect();
         this.io.disconnect();
+        this.roPane.disconnect();
         this.observed.clear();
         this.active.clear();
       }
