@@ -4,6 +4,7 @@ export class BreakoutManager {
   private breakoutRAF = new WeakMap<HTMLTableElement, number>();
   private breakoutRetryCount = new WeakMap<HTMLTableElement, number>();
   public outerDragActive = new WeakSet<HTMLTableElement>();
+  private breakoutApplied = new WeakMap<HTMLTableElement, boolean>();
 
   constructor(
     private settings: TableDragSettings,
@@ -144,7 +145,7 @@ export class BreakoutManager {
         this.log('breakout-skip-inactive', { class: table.className });
         return;
       }
-      
+
       const ctx = this.measureContextForEl(table);
       // If the host view is inactive or not yet laid out, its widths can be 0. Do not tear down wrappers in that case.
       if (ctx.paneWidth <= 0 || ctx.lineWidth <= 0) {
@@ -168,7 +169,25 @@ export class BreakoutManager {
       const specified = parseFloat((table.style.width || '').replace('px', '')) || 0;
       const desired = Math.max(intrinsic, specified);
 
-      if (desired > ctx.lineWidth + 1) {
+      // Hysteresis: avoid flapping near the line width threshold
+      const prev = this.breakoutApplied.get(table);
+      const hysteresis = Math.max(0, (this.settings as any).breakoutHysteresisPx ?? 16);
+      let wantBreakout: boolean;
+      if (prev === true) {
+        // Only exit breakout when sufficiently below line width
+        wantBreakout = desired > (ctx.lineWidth - hysteresis);
+      } else if (prev === false) {
+        // Only enter breakout when sufficiently above line width
+        wantBreakout = desired > (ctx.lineWidth + hysteresis);
+      } else {
+        // First-time decision
+        wantBreakout = desired > ctx.lineWidth + 1;
+      }
+
+      // While dragging, don't change the breakout state (avoid flicker). Just update measurements/styles.
+      const effectiveBreakout = this.outerDragActive.has(table) && prev !== undefined ? (prev as boolean) : wantBreakout;
+
+      if (effectiveBreakout) {
         // Optional bleed padding to avoid hugging pane edges
         const bleed = this.settings.bleedWideTables ? Math.max(0, this.settings.bleedGutterPx || 0) : 0;
         const leftAdj = Math.max(0, ctx.leftOffset - bleed);
@@ -227,7 +246,7 @@ export class BreakoutManager {
         }
         this.log('breakout-apply', { paneWidth: ctx.paneWidth, lineWidth: ctx.lineWidth, desired, side: ctx.sideMargin, host: ctx.host, mode: ctx.host === 'cm6' ? 'cm6-inline' : 'reading-wrap' });
       } else {
-        // Remove any CM6 inline breakout styles and wrappers
+        // Remove any CM6 inline breakout styles and wrappers (but don't clear table.style.width)
         (container as HTMLElement).style.width = '';
         (container as HTMLElement).style.marginLeft = '';
         (container as HTMLElement).style.marginRight = '';
@@ -241,8 +260,7 @@ export class BreakoutManager {
         container.classList.remove('otd-breakout-cm');
         this.removeBreakoutWrapper(table);
         table.classList.remove('otd-breakout');
-        // Also clean table-specific reading mode styles
-        table.style.width = '';
+        // Also clean table-specific reading mode styles (width is preserved)
         table.style.marginLeft = '';
         table.style.marginRight = '';
         table.style.overflowX = '';
@@ -251,6 +269,11 @@ export class BreakoutManager {
         table.style.paddingLeft = '';
         table.style.paddingRight = '';
         table.style.background = '';
+      }
+
+      // Persist breakout state when not actively dragging
+      if (!this.outerDragActive.has(table)) {
+        this.breakoutApplied.set(table, wantBreakout);
       }
     } catch (e) {
       // Non-fatal

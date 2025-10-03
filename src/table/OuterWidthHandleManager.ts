@@ -20,6 +20,8 @@ import { getColWidths, normalizeRatios } from '../utils/helpers';
  * @class
  */
 export class OuterWidthHandleManager {
+  private lastCenterAt = new WeakMap<HTMLTableElement, number>();
+
   constructor(
     private plugin: Plugin,
     private settings: TableDragSettings,
@@ -99,44 +101,71 @@ export class OuterWidthHandleManager {
     let startPx: number[] = [];
     let active = false;
 
-    const onOMove = (ev: PointerEvent) => {
-      if (!active) return;
-      const dx = ev.clientX - startX;
+    // rAF coalescing for pointer moves
+    let rafId: number | null = null;
+    let pendingTargetTotal: number | null = null;
+
+    const totalStartFrom = () => startPx.reduce((a, b) => a + b, 0);
+
+    const computeNext = (targetTotal: number): number[] => {
+      const totalStart = totalStartFrom();
       const cur = [...startPx];
-      const totalStart = startPx.reduce((a, b) => a + b, 0);
-      let targetTotal = totalStart + dx;
-      const minTotal = colCount * this.settings.minColumnWidthPx;
-      if (targetTotal < minTotal) targetTotal = minTotal;
-      if (this.settings.outerMaxWidthPx > 0) targetTotal = Math.min(targetTotal, this.settings.outerMaxWidthPx);
       const delta = targetTotal - totalStart;
-      let next: number[];
       if (this.settings.outerHandleMode === 'scale') {
-        const factor = targetTotal / totalStart;
-        next = cur.map((w) => Math.max(this.settings.minColumnWidthPx, Math.floor(w * factor)));
+        const factor = totalStart > 0 ? targetTotal / totalStart : 1;
+        const next = cur.map((w) => Math.max(this.settings.minColumnWidthPx, Math.floor(w * factor)));
         const diff = targetTotal - next.reduce((a, b) => a + b, 0);
         if (Math.abs(diff) >= 1)
           next[next.length - 1] = Math.max(
             this.settings.minColumnWidthPx,
             next[next.length - 1] + Math.round(diff)
           );
+        return next;
       } else {
-        next = [...cur];
+        const next = [...cur];
         const half = Math.round(delta / 2);
         next[0] = Math.max(this.settings.minColumnWidthPx, next[0] + half);
         next[next.length - 1] = Math.max(this.settings.minColumnWidthPx, next[next.length - 1] + (delta - half));
         const sum = next.reduce((a, b) => a + b, 0);
         if (sum !== targetTotal)
-          next[next.length - 1] = Math.max(this.settings.minColumnWidthPx, next[next.length - 1] + (targetTotal - sum));
+          next[next.length - 1] = Math.max(
+            this.settings.minColumnWidthPx,
+            next[next.length - 1] + (targetTotal - sum)
+          );
+        return next;
       }
+    };
+
+    const commit = () => {
+      rafId = null;
+      const t = pendingTargetTotal;
+      pendingTargetTotal = null;
+      if (t == null) return;
+      const next = computeNext(t);
       this.applyColWidths(cols, next);
-      (table.style as any).width = `${Math.floor(targetTotal)}px`;
+      (table.style as any).width = `${Math.floor(t)}px`;
 
       // Keep the table visually centered while dragging
-      this.centerTableDuringResize(table, targetTotal);
+      this.centerTableDuringResize(table, t);
 
+      // Batch dependent updates
       this.breakout.scheduleBreakoutForTable(table);
       positionColumnHandles();
       positionOuter();
+    };
+
+    const onOMove = (ev: PointerEvent) => {
+      if (!active) return;
+      const dx = ev.clientX - startX;
+      const totalStart = totalStartFrom();
+      let targetTotal = totalStart + dx;
+      const minTotal = colCount * this.settings.minColumnWidthPx;
+      if (targetTotal < minTotal) targetTotal = minTotal;
+      if (this.settings.outerMaxWidthPx > 0) targetTotal = Math.min(targetTotal, this.settings.outerMaxWidthPx);
+      pendingTargetTotal = targetTotal;
+      if (rafId == null) {
+        rafId = requestAnimationFrame(commit);
+      }
     };
 
     const onOUp = (_ev: PointerEvent) => {
@@ -146,6 +175,14 @@ export class OuterWidthHandleManager {
       ohandle.releasePointerCapture((_ev as any).pointerId);
       window.removeEventListener('pointermove', onOMove);
       window.removeEventListener('pointerup', onOUp);
+
+      // Flush any pending frame before persisting
+      if (rafId != null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+        commit();
+      }
+
       const finalPx = getColWidths(cols);
       const total = finalPx.reduce((a, b) => a + b, 0);
       const ratios = normalizeRatios(finalPx);
@@ -192,26 +229,7 @@ export class OuterWidthHandleManager {
       const minTotal = colCount * this.settings.minColumnWidthPx;
       if (targetTotal < minTotal) targetTotal = minTotal;
       if (this.settings.outerMaxWidthPx > 0) targetTotal = Math.min(targetTotal, this.settings.outerMaxWidthPx);
-      let next: number[];
-      if (this.settings.outerHandleMode === 'scale') {
-        const factor = targetTotal / totalStart;
-        next = cur.map((w) => Math.max(this.settings.minColumnWidthPx, Math.floor(w * factor)));
-        const diff = targetTotal - next.reduce((a, b) => a + b, 0);
-        if (Math.abs(diff) >= 1)
-          next[next.length - 1] = Math.max(
-            this.settings.minColumnWidthPx,
-            next[next.length - 1] + Math.round(diff)
-          );
-      } else {
-        const delta = targetTotal - totalStart;
-        next = [...cur];
-        const half = Math.round(delta / 2);
-        next[0] = Math.max(this.settings.minColumnWidthPx, next[0] + half);
-        next[next.length - 1] = Math.max(this.settings.minColumnWidthPx, next[next.length - 1] + (delta - half));
-        const sum = next.reduce((a, b) => a + b, 0);
-        if (sum !== targetTotal)
-          next[next.length - 1] = Math.max(this.settings.minColumnWidthPx, next[next.length - 1] + (targetTotal - sum));
-      }
+      const next = computeNext(targetTotal);
       this.applyColWidths(cols, next);
       (table.style as any).width = `${Math.floor(targetTotal)}px`;
 
@@ -238,6 +256,14 @@ export class OuterWidthHandleManager {
    */
   private centerTableDuringResize(table: HTMLTableElement, targetTotal: number): void {
     try {
+      // Throttle re-centering while actively dragging to reduce jank
+      if (this.breakout.outerDragActive.has(table)) {
+        const now = performance.now();
+        const last = this.lastCenterAt.get(table) || 0;
+        if (now - last < 50) return; // at most 20Hz
+        this.lastCenterAt.set(table, now);
+      }
+
       const ctxD = this.breakout.measureContextForEl(table);
       const bleed = this.settings.bleedWideTables ? Math.max(0, this.settings.bleedGutterPx || 0) : 0;
       const paneAvail = Math.max(0, ctxD.paneWidth - bleed * 2);

@@ -270,12 +270,13 @@ export class TableManager {
   private attachResizeObserver(table: HTMLTableElement, cols: HTMLTableColElement[], colCount: number): void {
     let layoutPending = false;
     const ro = new ResizeObserver(() => {
+      // Skip RO repositioning while outer drag is active; drag loop already repositions
+      if (this.breakout.outerDragActive.has(table)) return;
       if (layoutPending) return;
       layoutPending = true;
       requestAnimationFrame(() => {
         layoutPending = false;
-        const tRect = table.getBoundingClientRect();
-        
+
         // Reposition column handles
         this.columnHandles.positionHandles(table, cols, colCount);
 
