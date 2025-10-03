@@ -33,8 +33,20 @@ table.otd-managed{ table-layout: fixed; position: relative; }
 /* Parked (offscreen) tables disable handle hit-testing */
 table.otd-inactive .otd-chandle, table.otd-inactive .otd-rhandle, table.otd-inactive .otd-ohandle{ pointer-events: none; }
 
-/* Breakout wrapper: expands to pane width and provides horizontal scroll when table exceeds pane */
-.otd-breakout-wrap{ position: relative; display: flex; justify-content: center; overflow-x: visible; overflow-y: visible; }
+/* Reading mode breakout: force preview sizer to allow overflow */
+.markdown-preview-sizer:has(table.otd-breakout) { overflow: visible !important; }
+/* Also ensure el-table wrapper allows overflow */
+.el-table:has(table.otd-breakout) { overflow: visible !important; }
+
+/* Breakout wrapper for CM6 (not used in reading mode anymore) */
+.otd-breakout-wrap{ 
+  position: relative; 
+  display: flex; 
+  justify-content: center; 
+  overflow-x: visible; 
+  overflow-y: visible; 
+  background: var(--background-primary);
+}
 /* We set margins and width inline for precision; these are fallbacks */
 .otd-breakout-wrap{ max-width: 100%; }
 /* When wrapping a CM6 table widget, prevent its own scrollbars and width limits, and allow it to shrink-to-content */

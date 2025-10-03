@@ -49,7 +49,7 @@ export function tableResizeExtension(plugin: TableDragPlugin) {
                   t.classList.add('otd-managed');
                   plugin.applyStoredRatiosPx(t, key);
                   plugin.scheduleBreakoutForTable(t);
-                  if (plugin.settings.enableDebugLogs) plugin['log']?.('lp-mutation-apply', { path, fp });
+                  if (plugin.settings.enableDebugLogs) plugin.debug?.log('lp-mutation-apply', { path, fp });
                 }
               }
             }
@@ -80,7 +80,7 @@ export function tableResizeExtension(plugin: TableDragPlugin) {
             table.classList.add('otd-inactive');
           }
         }
-        if (plugin.settings.enableDebugLogs) plugin['log']?.('lp-viewport', { active: this.active.size, observed: this.observed.size });
+        if (plugin.settings.enableDebugLogs) plugin.debug?.log('lp-viewport', { active: this.active.size, observed: this.observed.size });
       }
 
       private scan() {
