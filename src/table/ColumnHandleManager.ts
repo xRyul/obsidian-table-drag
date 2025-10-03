@@ -147,7 +147,7 @@ export class ColumnHandleManager {
       const total = finalPx.reduce((a, b) => a + b, 0);
       this.storage.dataStore.tables[resolvedKeyStr] = {
         ratios,
-        lastPxWidth: containerWidth,
+        lastPxWidth: total,
         tablePxWidth: total,
         updatedAt: Date.now(),
       };
@@ -198,14 +198,14 @@ export class ColumnHandleManager {
         applyColWidths(cur);
       }
       const ratios = normalizeRatios(cur);
-      const sumTotal = cur.reduce((a, b) => a + b, 0);
+      const total = cur.reduce((a, b) => a + b, 0);
       this.storage.dataStore.tables[resolvedKeyStr] = {
         ratios,
-        lastPxWidth: containerWidth,
-        tablePxWidth: sumTotal,
+        lastPxWidth: total,
+        tablePxWidth: total,
         updatedAt: Date.now(),
       };
-      this.log('persist-dblclick', { key: resolvedKeyStr, ratios, total: sumTotal });
+      this.log('persist-dblclick', { key: resolvedKeyStr, ratios, total });
       void this.storage.saveDataStore();
       positionHandles();
     });
@@ -272,7 +272,7 @@ export class ColumnHandleManager {
         const sumTotal = cur.reduce((a, b) => a + b, 0);
         this.storage.dataStore.tables[resolvedKeyStr] = {
           ratios,
-          lastPxWidth: containerWidth,
+          lastPxWidth: sumTotal,
           tablePxWidth: sumTotal,
           updatedAt: Date.now(),
         };

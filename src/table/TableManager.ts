@@ -262,16 +262,19 @@ export class TableManager {
   ): void {
     // If we have stored ratios, apply robustly (px if container > 0; else % and reapply on resize)
     if (stored && stored.ratios && stored.ratios.length === colCount) {
-      if (stored.tablePxWidth && stored.tablePxWidth > 0) {
-        (table.style as any).width = `${Math.floor(stored.tablePxWidth)}px`;
+      const baseW = (stored.tablePxWidth && stored.tablePxWidth > 0)
+        ? stored.tablePxWidth
+        : containerWidth;
+      if (baseW && baseW > 0) {
+        (table.style as any).width = `${Math.floor(baseW)}px`;
       }
-      if (containerWidth > 0) {
+      if ((baseW || 0) > 0) {
         const px = stored.ratios.map((r: number) =>
-          Math.max(this.settings.minColumnWidthPx, Math.round(r * containerWidth))
+          Math.max(this.settings.minColumnWidthPx, Math.round(r * baseW))
         );
         this.widthHelper.applyColWidths(cols, px);
         table.classList.add('otd-managed');
-        this.log('rv-apply-px', { key: resolvedKeyStr, container: containerWidth, px });
+        this.log('rv-apply-px', { key: resolvedKeyStr, container: baseW, px });
       } else {
         this.widthHelper.applyRatiosAsPercent(cols, stored.ratios);
         table.classList.add('otd-managed');
@@ -472,10 +475,17 @@ export class TableManager {
     }
 
     if (stored && stored.ratios && stored.ratios.length === colCount) {
-      if (stored.tablePxWidth && stored.tablePxWidth > 0) {
-        (table.style as any).width = `${Math.floor(stored.tablePxWidth)}px`;
+      // Prefer stable base width from storage to avoid mode-switch jitter
+      const baseW = (stored.tablePxWidth && stored.tablePxWidth > 0)
+        ? stored.tablePxWidth
+        : (stored.lastPxWidth && stored.lastPxWidth > 0)
+          ? stored.lastPxWidth
+          : 0;
+      if (baseW > 0) {
+        (table.style as any).width = `${Math.floor(baseW)}px`;
       }
-      let w = table.getBoundingClientRect().width;
+      let w = baseW;
+      if (!w || w <= 0) w = table.getBoundingClientRect().width;
       if (!w || w <= 0) w = stored.lastPxWidth || stored.tablePxWidth || 0;
       if (!w || w <= 0) return;
       const px = stored.ratios.map((r: number) => Math.max(this.settings.minColumnWidthPx, Math.round(r * w)));

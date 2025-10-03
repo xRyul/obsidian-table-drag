@@ -133,10 +133,13 @@ export class BreakoutManager {
   }
 
   /**
-   * Update or remove breakout for a given table based on its intrinsic width vs readable line width.
-   * - If table is wider than the readable line width, we wrap it in a scrollable container that expands to pane width
-   *   and offsets the centered sizer margins so the table visually fills the pane.
-   * - Otherwise, we remove any wrapper and keep normal flow.
+   * Update or remove breakout for a given table based on intended table width vs readable line width.
+   * We treat the intended width as the max of:
+   * - Sum of our <col> widths under the otd colgroup (true target width under table-layout: fixed)
+   * - Any explicit table.style.width
+   * This avoids false positives from scrollWidth (content-intrinsic width) when the table is actually
+   * sized smaller and wrapping content. It also lets us detect wide tables whose rendered offsetWidth
+   * is clamped by the editor but whose col widths indicate a larger intended width.
    */
   updateBreakoutForTable(table: HTMLTableElement): void {
     try {
@@ -165,9 +168,22 @@ export class BreakoutManager {
       // Reset retry counter on successful measurement
       this.breakoutRetryCount.delete(table);
       const container = this.getBreakoutContainer(table);
-      const intrinsic = Math.max(table.scrollWidth, table.offsetWidth, 0);
+      // Compute intended width from our colgroup plus any explicit table width
+      let colSum = 0;
+      try {
+        const cg = table.querySelector('colgroup[data-otd="1"]') as HTMLTableColElement | null;
+        if (cg) {
+          const cols = Array.from(cg.querySelectorAll('col')) as HTMLTableColElement[];
+          for (const c of cols) {
+            const v = (c.style.width || '').trim();
+            const n = parseFloat(v.replace('px',''));
+            if (Number.isFinite(n)) colSum += Math.max(0, Math.floor(n));
+          }
+        }
+      } catch {}
       const specified = parseFloat((table.style.width || '').replace('px', '')) || 0;
-      const desired = Math.max(intrinsic, specified);
+      // Used/rendered width can be smaller due to host clamping; don't rely on it for decision
+      const desired = Math.max(colSum, specified);
 
       // Hysteresis: avoid flapping near the line width threshold
       const prev = this.breakoutApplied.get(table);
@@ -209,7 +225,7 @@ export class BreakoutManager {
           if (el.style.position !== 'relative') el.style.position = 'relative';
           if (el.style.zIndex !== '1') el.style.zIndex = '1';
           // When not overflowing the pane, pad both sides so the table stays centered visually
-          const pad = wantScroll === 'visible' ? Math.max(0, Math.floor((paneAvail - desired) / 2)) : 0;
+          const pad = wantScroll === 'visible' ? Math.max(0, Math.floor((paneAvail - Math.max(desired, table.offsetWidth || 0)) / 2)) : 0;
           if (el.style.paddingLeft !== `${pad}px`) el.style.paddingLeft = `${pad}px`;
           if (el.style.paddingRight !== `${pad}px`) el.style.paddingRight = `${pad}px`;
           el.classList.add('otd-breakout-cm');
@@ -239,7 +255,7 @@ export class BreakoutManager {
           // Add background to cover white preview sizer
           if (table.style.background !== 'var(--background-primary)') table.style.background = 'var(--background-primary)';
           // When not overflowing the pane, pad both sides so the table stays centered visually
-          const pad = wantScroll === 'visible' ? Math.max(0, Math.floor((paneAvail - desired) / 2)) : 0;
+          const pad = wantScroll === 'visible' ? Math.max(0, Math.floor((paneAvail - Math.max(desired, table.offsetWidth || 0)) / 2)) : 0;
           if (table.style.paddingLeft !== `${pad}px`) table.style.paddingLeft = `${pad}px`;
           if (table.style.paddingRight !== `${pad}px`) table.style.paddingRight = `${pad}px`;
           table.classList.add('otd-breakout');

@@ -21,6 +21,8 @@ import { getColWidths, normalizeRatios } from '../utils/helpers';
  */
 export class OuterWidthHandleManager {
   private lastCenterAt = new WeakMap<HTMLTableElement, number>();
+  // Track whether a table is currently considered "wide" for hysteresis-based centering
+  private wideState = new WeakMap<HTMLTableElement, boolean>();
 
   constructor(
     private plugin: Plugin,
@@ -148,8 +150,7 @@ export class OuterWidthHandleManager {
       // Keep the table visually centered while dragging
       this.centerTableDuringResize(table, t);
 
-      // Batch dependent updates
-      this.breakout.scheduleBreakoutForTable(table);
+      // Batch dependent updates (avoid Breakout recompute during drag to reduce flicker)
       positionColumnHandles();
       positionOuter();
     };
@@ -192,6 +193,11 @@ export class OuterWidthHandleManager {
         tablePxWidth: total,
         updatedAt: Date.now(),
       };
+      // Reset drag-state hysteresis so next drag starts fresh
+      this.wideState.delete(table);
+      // Force an immediate breakout recompute to clear or apply transforms as needed,
+      // then schedule another pass to settle after layout.
+      this.breakout.updateBreakoutForTable(table);
       this.breakout.scheduleBreakoutForTable(table);
       this.log('outer-drag', { key: resolvedKeyStr, mode: this.settings.outerHandleMode, total });
       void this.storage.saveDataStore();
@@ -256,7 +262,7 @@ export class OuterWidthHandleManager {
    */
   private centerTableDuringResize(table: HTMLTableElement, targetTotal: number): void {
     try {
-      // Throttle re-centering while actively dragging to reduce jank
+      // Throttle during drag; but do NOT fight the breakout transform.
       if (this.breakout.outerDragActive.has(table)) {
         const now = performance.now();
         const last = this.lastCenterAt.get(table) || 0;
@@ -281,19 +287,10 @@ export class OuterWidthHandleManager {
         scrollEl: !!scrollEl,
         host: ctxD.host,
       });
-      if (scrollEl) {
-        if (targetTotal > paneAvail + 1) {
-          const center = Math.max(0, Math.floor((targetTotal - paneAvail) / 2));
-          const oldScroll = scrollEl.scrollLeft;
-          if (Math.abs(scrollEl.scrollLeft - center) > 1) {
-            scrollEl.scrollLeft = center;
-            this.log('outer-drag-scroll', { oldScroll, newScroll: center, targetTotal, paneAvail });
-          }
-        } else if (scrollEl.scrollLeft !== 0) {
-          scrollEl.scrollLeft = 0;
-          this.log('outer-drag-reset-scroll', { targetTotal, paneAvail });
-        }
-      }
+
+      // During drag, avoid changing scrollLeft or clearing/setting transforms.
+      // Let the current breakout transform remain stable; on pointerup we will
+      // immediately recompute breakout and clear/apply transforms as needed.
     } catch (e) {
       this.log('outer-drag-center-error', e);
     }
