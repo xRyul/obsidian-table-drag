@@ -34,9 +34,13 @@ export class BreakoutManager {
     const container = this.getBreakoutContainer(table);
     const parent = container.parentElement;
     if (parent && parent.classList.contains('otd-breakout-wrap')) return parent as HTMLDivElement;
-    const wrap = document.createElement('div');
-    wrap.className = 'otd-breakout-wrap';
-    if (parent) parent.insertBefore(wrap, container);
+    // Use createDiv if parent has it (most Obsidian elements do), otherwise fallback to createElement
+    const wrap = (parent as any)?.createDiv?.({ cls: 'otd-breakout-wrap' }) as HTMLDivElement 
+      || document.createElement('div');
+    if (!wrap.classList.contains('otd-breakout-wrap')) {
+      wrap.className = 'otd-breakout-wrap';
+    }
+    if (parent && wrap.parentElement !== parent) parent.insertBefore(wrap, container);
     wrap.appendChild(container);
     return wrap;
   }

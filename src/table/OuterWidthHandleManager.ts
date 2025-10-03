@@ -1,3 +1,4 @@
+import type { Plugin } from 'obsidian';
 import type { TableDragSettings } from '../types';
 import type { StorageManager } from '../storage/StorageManager';
 import type { BreakoutManager } from '../breakout/BreakoutManager';
@@ -20,6 +21,7 @@ import { getColWidths, normalizeRatios } from '../utils/helpers';
  */
 export class OuterWidthHandleManager {
   constructor(
+    private plugin: Plugin,
     private settings: TableDragSettings,
     private storage: StorageManager,
     private breakout: BreakoutManager,
@@ -43,12 +45,14 @@ export class OuterWidthHandleManager {
   ): void {
     let ohandle = table.querySelector('.otd-ohandle') as HTMLDivElement | null;
     if (!ohandle) {
-      ohandle = document.createElement('div');
-      ohandle.className = 'otd-ohandle';
-      ohandle.setAttribute('role', 'separator');
-      ohandle.setAttribute('aria-label', 'Resize table width');
-      ohandle.tabIndex = 0;
-      table.appendChild(ohandle);
+      ohandle = table.createDiv({
+        cls: 'otd-ohandle',
+        attr: {
+          'role': 'separator',
+          'aria-label': 'Resize table width',
+          'tabindex': '0'
+        }
+      }) as HTMLDivElement;
       this.log('outer-mounted', { key: resolvedKeyStr });
     }
 
@@ -156,7 +160,7 @@ export class OuterWidthHandleManager {
       void this.storage.saveDataStore();
     };
 
-    ohandle.addEventListener('pointerdown', (ev: PointerEvent) => {
+    this.plugin.registerDomEvent(ohandle, 'pointerdown', (ev: PointerEvent) => {
       ev.preventDefault();
       ev.stopPropagation();
       active = true;
@@ -165,8 +169,8 @@ export class OuterWidthHandleManager {
       this.breakout.outerDragActive.add(table);
       ohandle.setPointerCapture((ev as any).pointerId);
       this.log('outer-ptrdown', { key: resolvedKeyStr, startPx, startX });
-      window.addEventListener('pointermove', onOMove, { passive: true });
-      window.addEventListener('pointerup', onOUp, { passive: true });
+      this.plugin.registerDomEvent(window, 'pointermove', onOMove, { passive: true });
+      this.plugin.registerDomEvent(window, 'pointerup', onOUp, { passive: true });
     });
 
     const onKey = (ev: KeyboardEvent) => {
@@ -226,7 +230,7 @@ export class OuterWidthHandleManager {
       positionColumnHandles();
       positionOuter();
     };
-    ohandle.addEventListener('keydown', onKey);
+    this.plugin.registerDomEvent(ohandle, 'keydown', onKey);
   }
 
   /**

@@ -1,3 +1,4 @@
+import type { Plugin } from 'obsidian';
 import type { TableKey, TableDragSettings } from '../types';
 import type { StorageManager } from '../storage/StorageManager';
 import { getColWidths, normalizeRatios, measureAutofitWidth } from '../utils/helpers';
@@ -18,6 +19,7 @@ import { applyDeltaWithSnap } from '../utils/layout';
  */
 export class ColumnHandleManager {
   constructor(
+    private plugin: Plugin,
     private settings: TableDragSettings,
     private storage: StorageManager,
     private log: (event: string, details?: any) => void
@@ -46,13 +48,15 @@ export class ColumnHandleManager {
     for (let i = 0; i < colCount - 1; i++) {
       let handle = table.querySelector(`.otd-chandle[data-otd-index="${i}"]`) as HTMLDivElement | null;
       if (!handle) {
-        handle = document.createElement('div');
-        handle.className = 'otd-chandle';
-        handle.setAttribute('data-otd-index', String(i));
-        handle.setAttribute('role', 'separator');
-        handle.setAttribute('aria-label', `Resize column ${i + 1}`);
-        handle.tabIndex = 0;
-        table.appendChild(handle);
+        handle = table.createDiv({
+          cls: 'otd-chandle',
+          attr: {
+            'data-otd-index': String(i),
+            'role': 'separator',
+            'aria-label': `Resize column ${i + 1}`,
+            'tabindex': '0'
+          }
+        }) as HTMLDivElement;
       }
 
       this.attachListeners(
@@ -149,7 +153,7 @@ export class ColumnHandleManager {
       void this.storage.saveDataStore();
     };
 
-    handle.addEventListener('pointerdown', (ev: PointerEvent) => {
+    this.plugin.registerDomEvent(handle, 'pointerdown', (ev: PointerEvent) => {
       if (this.settings.requireAltToDrag && !ev.altKey) return;
       ev.preventDefault();
       ev.stopPropagation();
@@ -161,11 +165,11 @@ export class ColumnHandleManager {
       const cur = getColWidths(cols);
       leftWidth = cur[colIndex];
       rightWidth = cur[colIndex + 1];
-      window.addEventListener('pointermove', onPointerMove, { passive: true });
-      window.addEventListener('pointerup', onPointerUp, { passive: true });
+      this.plugin.registerDomEvent(window, 'pointermove', onPointerMove, { passive: true });
+      this.plugin.registerDomEvent(window, 'pointerup', onPointerUp, { passive: true });
     });
 
-    handle.addEventListener('dblclick', (ev: MouseEvent) => {
+    this.plugin.registerDomEvent(handle, 'dblclick', (ev: MouseEvent) => {
       if (onActiveTable) onActiveTable(table, key);
       ev.preventDefault();
       const cur = getColWidths(cols);
@@ -202,7 +206,7 @@ export class ColumnHandleManager {
       positionHandles();
     });
 
-    handle.addEventListener('keydown', (ev: KeyboardEvent) => {
+    this.plugin.registerDomEvent(handle, 'keydown', (ev: KeyboardEvent) => {
       if (onActiveTable) onActiveTable(table, key);
       const cur = getColWidths(cols);
       const total = cur[colIndex] + cur[colIndex + 1];

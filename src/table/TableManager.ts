@@ -45,9 +45,9 @@ export class TableManager {
     private log: (event: string, details?: any) => void
   ) {
     this.widthHelper = new TableWidthHelper(settings);
-    this.columnHandles = new ColumnHandleManager(settings, storage, log);
-    this.outerHandles = new OuterWidthHandleManager(settings, storage, breakout, log);
-    this.rowHandles = new RowHandleManager(settings, storage, log);
+    this.columnHandles = new ColumnHandleManager(plugin, settings, storage, log);
+    this.outerHandles = new OuterWidthHandleManager(plugin, settings, storage, breakout, log);
+    this.rowHandles = new RowHandleManager(plugin, settings, storage, log);
   }
 
   /**
@@ -183,6 +183,7 @@ export class TableManager {
           }
         });
         ro.observe(table);
+        this.plugin.register(() => ro.disconnect());
       }
     } else {
       // derive from header widths or equal split
@@ -293,6 +294,7 @@ export class TableManager {
       });
     });
     ro.observe(table);
+    this.plugin.register(() => ro.disconnect());
   }
 
   /**

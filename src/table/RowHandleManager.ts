@@ -1,3 +1,4 @@
+import type { Plugin } from 'obsidian';
 import type { TableDragSettings } from '../types';
 import type { StorageManager } from '../storage/StorageManager';
 import { getColWidths, normalizeRatios } from '../utils/helpers';
@@ -18,6 +19,7 @@ import { layoutRowHandleWithRects } from '../utils/layout';
  */
 export class RowHandleManager {
   constructor(
+    private plugin: Plugin,
     private settings: TableDragSettings,
     private storage: StorageManager,
     private log: (event: string, details?: any) => void
@@ -40,13 +42,15 @@ export class RowHandleManager {
     rows.forEach((row, rIndex) => {
       let rHandle = table.querySelector(`.otd-rhandle[data-otd-row-index="${rIndex}"]`) as HTMLDivElement | null;
       if (!rHandle) {
-        rHandle = document.createElement('div') as HTMLDivElement;
-        rHandle.className = 'otd-rhandle';
-        rHandle.setAttribute('tabindex', '0');
-        rHandle.setAttribute('role', 'separator');
-        rHandle.setAttribute('aria-label', `Resize row ${rIndex + 1}`);
-        rHandle.setAttribute('data-otd-row-index', String(rIndex));
-        table.appendChild(rHandle);
+        rHandle = table.createDiv({
+          cls: 'otd-rhandle',
+          attr: {
+            'tabindex': '0',
+            'role': 'separator',
+            'aria-label': `Resize row ${rIndex + 1}`,
+            'data-otd-row-index': String(rIndex)
+          }
+        }) as HTMLDivElement;
       }
 
       // Initial layout
@@ -114,7 +118,7 @@ export class RowHandleManager {
       void this.storage.saveDataStore();
     };
 
-    rHandle.addEventListener('pointerdown', (ev: PointerEvent) => {
+    this.plugin.registerDomEvent(rHandle, 'pointerdown', (ev: PointerEvent) => {
       ev.preventDefault();
       ev.stopPropagation();
       activeR = true;
@@ -122,11 +126,11 @@ export class RowHandleManager {
       startHeight = row.getBoundingClientRect().height;
       rHandle.setPointerCapture((ev as any).pointerId);
       rHandle.focus();
-      window.addEventListener('pointermove', onRMove, { passive: true });
-      window.addEventListener('pointerup', onRUp, { passive: true });
+      this.plugin.registerDomEvent(window, 'pointermove', onRMove, { passive: true });
+      this.plugin.registerDomEvent(window, 'pointerup', onRUp, { passive: true });
     });
 
-    rHandle.addEventListener('keydown', (ev: KeyboardEvent) => {
+    this.plugin.registerDomEvent(rHandle, 'keydown', (ev: KeyboardEvent) => {
       let used = false;
       let target = row.getBoundingClientRect().height;
       const step = ev.ctrlKey || (ev as any).metaKey ? 1 : this.settings.rowKeyboardStepPx;

@@ -23,8 +23,12 @@ export class TableWidthHelper {
     let colgroupEl = table.querySelector('colgroup[data-otd="1"]') as HTMLTableColElement | null;
     if (!colgroupEl) {
       const existing = table.querySelector('colgroup');
-      colgroupEl = document.createElement('colgroup') as HTMLTableColElement;
-      colgroupEl.setAttribute('data-otd', '1');
+      // Try to use createEl if available, otherwise fallback to createElement
+      colgroupEl = ((table as any).createEl?.('colgroup', { attr: { 'data-otd': '1' } }) as HTMLTableColElement)
+        || document.createElement('colgroup') as HTMLTableColElement;
+      if (!colgroupEl.hasAttribute('data-otd')) {
+        colgroupEl.setAttribute('data-otd', '1');
+      }
       if (existing) {
         table.insertBefore(colgroupEl!, existing.nextSibling);
       } else {
@@ -36,7 +40,9 @@ export class TableWidthHelper {
       (colgroupEl as HTMLTableColElement).querySelectorAll('col')
     ) as HTMLTableColElement[];
     while (cols.length < colCount) {
-      const c = document.createElement('col');
+      // Try to use createEl if available, otherwise fallback to createElement
+      const c = ((colgroupEl as any).createEl?.('col') as HTMLTableColElement)
+        || document.createElement('col');
       (colgroupEl as HTMLTableColElement).appendChild(c);
       cols.push(c as any);
     }
