@@ -141,12 +141,17 @@ export class TableManager {
 
       // Compose new px widths
       const newPx: number[] = new Array(colCount).fill(minW);
-      if (oldHdrs.length === 0 || newHdrs.length === 0) {
+
+      if ((latest.sizes.ratios?.length || 0) === colCount) {
+        // Same column count: preserve by index to avoid resets when header text changes only
+        const carry = Math.min(oldPx.length, colCount);
+        for (let i = 0; i < carry; i++) newPx[i] = Math.max(minW, oldPx[i]);
+      } else if (oldHdrs.length === 0 || newHdrs.length === 0) {
         // Fallback: index-based carryover for overlapping prefix
         const carry = Math.min(oldPx.length, colCount);
         for (let i = 0; i < carry; i++) newPx[i] = Math.max(minW, oldPx[i]);
       } else {
-        // Align old headers as a subsequence of new headers
+        // Column count differs: align old headers as a subsequence of new headers (insert/delete)
         let iOld = 0;
         for (let jNew = 0; jNew < newHdrs.length && jNew < colCount; jNew++) {
           if (iOld < oldHdrs.length && oldHdrs[iOld] === newHdrs[jNew]) {
