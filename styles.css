@@ -28,6 +28,13 @@ table.otd-wrap td *, table.otd-wrap th *{
 /* Avoid inner scrollbars inside cells */
 table.otd-managed td, table.otd-managed th{ overflow: visible; }
 
+/* Non-wrapping mode: clip overflowing content so it doesn't overlay adjacent cells */
+table.otd-managed:not(.otd-wrap) td, table.otd-managed:not(.otd-wrap) th{
+  white-space: nowrap !important;
+  overflow: hidden !important; /* prevent overlay into next cells */
+  text-overflow: ellipsis;     /* optional visual hint; will fall back to clip if unsupported */
+}
+
 /* Stabilize layout during LP mutations */
 table.otd-managed{ table-layout: fixed; position: relative; }
 /* Parked (offscreen) tables disable handle hit-testing */
